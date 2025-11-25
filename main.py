@@ -218,6 +218,10 @@ class FileModification(BaseModel):
     diff_summary: str
     original_length: int
     modified_length: int
+    evaluation: Optional[Dict] = None  # AI评估结果
+    react_thinking_process: Optional[List] = None  # ReactAgent思考过程
+    react_search_history: Optional[List] = None  # ReactAgent搜索历史
+    truncated: bool = False
 
 
 class ConsistencyCheckResponse(BaseModel):
@@ -311,7 +315,8 @@ async def check_consistency(request: ConsistencyCheckRequest):
             modifications = await consistency_checker.generate_modifications(
                 modification_request=request.modification_request,
                 current_modification=None,  # 没有参考修改，直接根据用户请求修改
-                files_to_modify=files_content  # 所有找到的文档
+                files_to_modify=files_content,  # 所有找到的文档
+                project_id=request.project_id  # 传递项目ID给ReactAgent
             )
         else:
             logger.info("没有文档需要修改")

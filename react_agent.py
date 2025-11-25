@@ -64,10 +64,16 @@ class ReactAgent:
                 "action": action
             })
             
-            if action["type"] == "search":
+            # 检查action是否包含type字段
+            action_type = action.get("type", "finish")
+            if not action_type:
+                logger.warning(f"AI决策缺少type字段，默认为finish")
+                action_type = "finish"
+            
+            if action_type == "search":
                 # 执行搜索
-                logger.info(f"执行搜索: {action['query']}")
-                search_result = await self.rag_tool.search(action["query"])
+                logger.info(f"执行搜索: {action.get('query', user_request)}")
+                search_result = await self.rag_tool.search(action.get("query", user_request))
                 
                 # 检查是否真的有内容（bundles不为空）
                 has_content = False
@@ -78,13 +84,13 @@ class ReactAgent:
                 
                 self.search_history.append({
                     "iteration": iteration + 1,
-                    "query": action["query"],
+                    "query": action.get("query", user_request),
                     "success": search_result["success"],
                     "has_content": has_content
                 })
                 
                 if has_content:
-                    context += f"\n\n搜索结果 ({action['query']}):\n{json.dumps(search_result['data'], ensure_ascii=False)}\n"
+                    context += f"\n\n搜索结果 ({action.get('query', user_request)}):\n{json.dumps(search_result['data'], ensure_ascii=False)}\n"
                     logger.info(f"搜索成功，已更新上下文（bundles: {len(bundles)}）")
                 else:
                     logger.warning(f"搜索返回为空（bundles: 0）")
@@ -99,16 +105,20 @@ class ReactAgent:
                         logger.info(f"文章已生成（无RAG），长度: {len(article_part)} 字符")
                         break
             
-            elif action["type"] == "generate":
+            elif action_type == "generate":
                 # 生成文章片段
                 logger.info(f"生成文章片段...")
                 article_part = await self._generate_content(user_request, context, action.get("instruction", ""))
                 article_parts.append(article_part)
                 logger.info(f"文章片段已生成，长度: {len(article_part)} 字符")
             
-            elif action["type"] == "finish":
+            elif action_type == "finish":
                 # 完成生成
                 logger.info("任务完成，结束迭代")
+                break
+            
+            else:
+                logger.warning(f"未知的action类型: {action_type}，结束迭代")
                 break
         
         # 合并所有文章片段
