@@ -319,41 +319,114 @@ class ReactAgent:
     
     async def _edit_content(self, user_request: str, original_content: str, context: str) -> str:
         """
-        根据用户要求编辑文章内容
+        根据用户要求编辑文章内容 - 全文一致性修改
         """
-        prompt = f"""你需要根据用户的要求修改以下文章。
+        # 第一步：分析需要修改的地方
+        analysis_prompt = f"""请仔细分析以下文章，找出所有需要根据用户要求进行修改的地方。
 
 原始文章:
 {original_content}
 
-用户要求:
+用户修改要求:
 {user_request}
 
 参考资料:
 {context if context else "无"}
 
-要求:
-1. 保持文章的整体风格和结构
-2. 精准地按照用户要求进行修改
-3. 如有需要，可引用参考资料中的信息
-4. 使用中文
+请以JSON格式输出分析结果：
+{{
+  "modification_type": "修改类型（如：术语替换、观点转变、数据更新、立场调整等）",
+  "affected_sections": [
+    {{"section": "段落/章节描述", "reason": "需要修改的原因"}},
+    ...
+  ],
+  "consistency_requirements": "全文一致性要求说明"
+}}
 
-直接返回修改后的完整文章，不要其他说明。"""
+只返回JSON，不要其他内容。"""
 
         try:
+            logger.info("第一步：分析全文需要修改的位置...")
+            analysis_response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一个专业的文章分析师，擅长识别文章中需要修改的所有相关位置。"},
+                    {"role": "user", "content": analysis_prompt}
+                ],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            
+            analysis_content = analysis_response.choices[0].message.content.strip()
+            
+            # 提取JSON
+            if "```json" in analysis_content:
+                analysis_content = analysis_content.split("```json")[1].split("```")[0].strip()
+            elif "```" in analysis_content:
+                analysis_content = analysis_content.split("```")[1].split("```")[0].strip()
+            
+            analysis = json.loads(analysis_content)
+            logger.info(f"分析完成: {json.dumps(analysis, ensure_ascii=False, indent=2)}")
+            
+        except Exception as e:
+            logger.warning(f"分析阶段出错，使用基础模式: {str(e)}")
+            analysis = None
+        
+        # 第二步：执行全文一致性修改
+        edit_prompt = f"""你需要对以下文章进行全文一致性修改。
+
+原始文章:
+{original_content}
+
+用户修改要求:
+{user_request}
+
+参考资料:
+{context if context else "无"}
+
+"""
+        if analysis:
+            edit_prompt += f"""
+分析结果:
+- 修改类型: {analysis.get('modification_type', '')}
+- 受影响的部分: {len(analysis.get('affected_sections', []))} 处
+- 一致性要求: {analysis.get('consistency_requirements', '')}
+
+"""
+        
+        edit_prompt += """关键要求：
+1. **全文一致性**：确保所有相关的段落、观点、数据、引用都保持一致地修改
+2. **逻辑连贯**：修改后的内容在全文中逻辑自洽，不能出现矛盾
+3. **完整性**：不要遗漏任何需要修改的地方
+4. **风格保持**：保持原文的写作风格和结构
+5. **使用中文**：所有内容使用中文
+
+请仔细检查全文，确保没有遗漏任何需要修改的地方，直接返回修改后的完整文章，不要其他说明。"""
+
+        try:
+            logger.info("第二步：执行全文一致性修改...")
+            
+            # 根据原文长度动态调整 max_tokens
+            estimated_tokens = len(original_content) // 2  # 粗略估计
+            max_tokens = min(8000, max(4000, estimated_tokens + 1000))
+            logger.info(f"原文长度: {len(original_content)} 字符，设置 max_tokens: {max_tokens}")
+            
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是一个专业的文章编辑，擅长根据要求精准修改文章。"},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": "你是一个专业的文章编辑，擅长全文一致性修改，确保所有相关位置都被正确修改且逻辑连贯。"},
+                    {"role": "user", "content": edit_prompt}
                 ],
                 temperature=0.7,
-                max_tokens=3000
+                max_tokens=max_tokens
             )
             
-            return response.choices[0].message.content.strip()
+            edited_content = response.choices[0].message.content.strip()
+            logger.info(f"修改完成，修改后长度: {len(edited_content)} 字符")
+            return edited_content
             
         except Exception as e:
+            logger.error(f"编辑内容时出错: {str(e)}")
             return f"编辑内容时出错: {str(e)}"
     
     async def _generate_content_without_rag(self, user_request: str) -> str:

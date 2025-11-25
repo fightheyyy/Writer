@@ -17,7 +17,7 @@ function GenerateMode() {
 
     setLoading(true)
     try {
-      const response = await fetch('/generate', {
+      const response = await fetch('/api/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

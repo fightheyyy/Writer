@@ -1,14 +1,27 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict
 from react_agent import ReactAgent
 from logger import get_logger
+from consistency_checker import ConsistencyChecker
+from knowledge_base import KnowledgeBaseManager
 
 logger = get_logger(__name__)
 
 app = FastAPI(title="ReAct Article Generator")
+
+# 创建API路由器（所有API都挂载在 /api 下）
+from fastapi import APIRouter
+api_router = APIRouter(prefix="/api")
+
+# 初始化一致性检查器和知识库管理器
+consistency_checker = ConsistencyChecker()
+kb_manager = KnowledgeBaseManager()
 
 # CORS 支持
 app.add_middleware(
@@ -37,7 +50,7 @@ class ArticleResponse(BaseModel):
     mode: str
 
 
-@app.post("/generate", response_model=ArticleResponse)
+@api_router.post("/generate", response_model=ArticleResponse)
 async def generate_article(request: ArticleRequest):
     """
     生成或编辑文章
@@ -79,14 +92,268 @@ async def generate_article(request: ArticleRequest):
     )
 
 
-@app.get("/health")
+@api_router.get("/health")
 async def health_check():
     return {"status": "ok"}
 
+
+# ============ 知识库上传API ============
+
+class UploadRequest(BaseModel):
+    minio_url: str
+    project_id: str
+    enable_vlm: bool = False
+
+
+class BatchUploadRequest(BaseModel):
+    minio_urls: List[str]
+    project_id: str
+    enable_vlm: bool = False
+
+
+class UploadResponse(BaseModel):
+    success: bool
+    message: str
+    success_count: int = 0
+    total: int = 0
+    results: List[Dict] = []
+
+
+@api_router.post("/upload-to-kb")
+async def upload_to_knowledge_base(request: UploadRequest):
+    """
+    上传单个文件到知识库
+    """
+    logger.info(f"上传文件到知识库: {request.minio_url}")
+    
+    try:
+        result = await kb_manager.upload_to_knowledge_base(
+            minio_url=request.minio_url,
+            project_id=request.project_id,
+            enable_vlm=request.enable_vlm
+        )
+        
+        if result.get("success"):
+            return UploadResponse(
+                success=True,
+                message="上传成功",
+                success_count=1,
+                total=1,
+                results=[result]
+            )
+        else:
+            return UploadResponse(
+                success=False,
+                message=result.get("error", "上传失败"),
+                success_count=0,
+                total=1,
+                results=[result]
+            )
+    except Exception as e:
+        logger.error(f"上传失败: {str(e)}")
+        return UploadResponse(
+            success=False,
+            message=str(e),
+            success_count=0,
+            total=1,
+            results=[]
+        )
+
+
+@api_router.post("/batch-upload-to-kb")
+async def batch_upload_files_to_knowledge_base(request: BatchUploadRequest):
+    """
+    批量上传文件到知识库
+    """
+    logger.info(f"=" * 80)
+    logger.info(f"批量上传 {len(request.minio_urls)} 个文件到知识库")
+    logger.info(f"Project ID: {request.project_id}")
+    logger.info(f"=" * 80)
+    
+    try:
+        results = await kb_manager.batch_upload_files_to_kb(
+            minio_urls=request.minio_urls,
+            project_id=request.project_id,
+            enable_vlm=request.enable_vlm
+        )
+        
+        success_count = sum(1 for r in results if r.get("success"))
+        
+        logger.info(f"批量上传完成: {success_count}/{len(request.minio_urls)} 成功")
+        
+        return UploadResponse(
+            success=success_count > 0,
+            message=f"上传完成: {success_count}/{len(request.minio_urls)} 成功",
+            success_count=success_count,
+            total=len(request.minio_urls),
+            results=results
+        )
+        
+    except Exception as e:
+        logger.error(f"批量上传失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return UploadResponse(
+            success=False,
+            message=f"批量上传失败: {str(e)}",
+            success_count=0,
+            total=len(request.minio_urls),
+            results=[]
+        )
+
+
+# ============ RAG模式一致性检查API ============
+
+class ConsistencyCheckRequest(BaseModel):
+    modification_point: str
+    modification_request: str
+    project_id: str
+    top_k: int = 15
+
+
+class FileModification(BaseModel):
+    file_path: str
+    original_content: str
+    modified_content: str
+    diff_summary: str
+    original_length: int
+    modified_length: int
+
+
+class ConsistencyCheckResponse(BaseModel):
+    success: bool
+    modification_point: str
+    consistency_analysis: dict
+    related_files: Dict[str, List] = {}
+    total_files: int = 0
+    total_chunks: int = 0
+    modifications: List[FileModification]
+    message: str
+
+
+@api_router.post("/check-consistency", response_model=ConsistencyCheckResponse)
+async def check_consistency(request: ConsistencyCheckRequest):
+    """
+    RAG模式一致性检查
+    
+    工作流程：
+    1. 通过RAG检索与修改点相关的所有文档
+    2. 从MinIO读取这些文档的完整内容
+    3. AI分析一致性并生成修改建议
+    4. 返回Diff结果
+    """
+    logger.info(f"\n{'='*80}")
+    logger.info(f"RAG模式一致性检查")
+    logger.info(f"修改点: {request.modification_point}")
+    logger.info(f"Project ID: {request.project_id}")
+    logger.info(f"Top K: {request.top_k}")
+    logger.info(f"{'='*80}\n")
+    
+    try:
+        # 步骤1: 通过RAG检索相关文档
+        logger.info("步骤1/4: RAG检索相关文档...")
+        related_docs_result = await consistency_checker.find_related_documents(
+            modification_point=request.modification_point,
+            project_id=request.project_id,
+            top_k=request.top_k
+        )
+        
+        if related_docs_result["total_files"] == 0:
+            return ConsistencyCheckResponse(
+                success=True,
+                modification_point=request.modification_point,
+                consistency_analysis={},
+                related_files={},
+                total_files=0,
+                total_chunks=0,
+                modifications=[],
+                message="未找到相关文档"
+            )
+        
+        logger.info(f"找到 {related_docs_result['total_files']} 个相关文档")
+        
+        # 步骤2: 从MinIO读取完整文档内容
+        logger.info("步骤2/4: 从MinIO读取文档内容...")
+        files_content = {}
+        for minio_url in related_docs_result["related_files"].keys():
+            content = await consistency_checker.read_file_content(minio_url)
+            if content:
+                files_content[minio_url] = content
+                logger.info(f"读取成功: {minio_url.split('/')[-1]} ({len(content)} 字符)")
+        
+        if not files_content:
+            return ConsistencyCheckResponse(
+                success=False,
+                modification_point=request.modification_point,
+                consistency_analysis={},
+                related_files=related_docs_result["related_files"],
+                total_files=related_docs_result["total_files"],
+                total_chunks=related_docs_result["total_chunks"],
+                modifications=[],
+                message="无法读取文档内容"
+            )
+        
+        # 步骤3: AI分析一致性
+        logger.info("步骤3/4: AI分析一致性...")
+        
+        analysis = await consistency_checker.analyze_consistency(
+            modification_request=request.modification_request,
+            current_file_content=None,  # 不需要当前文件，直接分析所有找到的文档
+            related_files_content=files_content  # 所有找到的文档
+        )
+        
+        # 步骤4: 为所有找到的文档生成修改建议
+        logger.info("步骤4/4: 生成修改建议...")
+        modifications = []
+        
+        if files_content:
+            logger.info(f"为 {len(files_content)} 个相关文档生成修改建议...")
+            modifications = await consistency_checker.generate_modifications(
+                modification_request=request.modification_request,
+                current_modification=None,  # 没有参考修改，直接根据用户请求修改
+                files_to_modify=files_content  # 所有找到的文档
+            )
+        else:
+            logger.info("没有文档需要修改")
+        
+        logger.info(f"\n{'='*80}")
+        logger.info(f"一致性检查完成")
+        logger.info(f"相关文档: {len(files_content)} 个")
+        logger.info(f"修改建议: {len(modifications)} 个")
+        logger.info(f"{'='*80}\n")
+        
+        return ConsistencyCheckResponse(
+            success=True,
+            modification_point=request.modification_point,
+            consistency_analysis=analysis,
+            related_files=related_docs_result["related_files"],
+            total_files=related_docs_result["total_files"],
+            total_chunks=related_docs_result["total_chunks"],
+            modifications=[FileModification(**m) for m in modifications],
+            message=f"成功分析 {len(files_content)} 个文档，生成 {len(modifications)} 个修改建议"
+        )
+        
+    except Exception as e:
+        logger.error(f"一致性检查失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return ConsistencyCheckResponse(
+            success=False,
+            modification_point=request.modification_point,
+            consistency_analysis={},
+            related_files={},
+            total_files=0,
+            total_chunks=0,
+            modifications=[],
+            message=f"检查失败: {str(e)}"
+        )
+
+
+# 挂载API路由器
+app.include_router(api_router)
 
 # 静态文件服务（前端）
 try:
     app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
 except:
     pass
-

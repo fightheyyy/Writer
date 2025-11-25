@@ -21,7 +21,7 @@ function EditMode() {
 
     setLoading(true)
     try {
-      const response = await fetch('/generate', {
+      const response = await fetch('/api/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -106,10 +106,10 @@ function EditMode() {
         />
         <textarea
           className="query-input"
-          placeholder="输入修改要求，例如：增加更多实例、调整语气为正式、精简内容..."
+          placeholder="输入修改要求（支持全文一致性修改）&#10;例如：&#10;- 把所有'人工智能'改为'AI技术'&#10;- 将论点从'支持'改成'反对'&#10;- 更新所有2022年数据到2024年&#10;- 调整全文语气为正式/轻松&#10;- 增加更多实例并保持论证一致"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          rows={3}
+          rows={4}
         />
         <button
           className="edit-btn"
