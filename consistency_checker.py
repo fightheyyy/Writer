@@ -435,7 +435,7 @@ class ConsistencyChecker:
 {current_modification[:500]}...
 """
         
-        evaluation_prompt = f"""你是一个专业的文档评估专家。请分析以下文档，评估需要修改的点。
+        evaluation_prompt = f"""你是一个专业的文档评估专家。请**深入分析**以下文档，评估需要修改的点。
 
 修改要求:
 {modification_request}
@@ -444,11 +444,27 @@ class ConsistencyChecker:
 文件内容:
 {original_content}
 
-你的任务是**评估并提取**需要修改的位置：
+你的任务是**深度评估并提取**需要修改的位置：
+
+**第一步：深度分析文档**
+- 仔细阅读文档，理解其结构、内容和逻辑
+- 根据修改要求，识别哪些部分**真正需要修改**
+- 不要只看关键词，要理解**修改的目的和意义**
+
+**第二步：评估修改点**
 1. **识别修改点**: 找出文档中哪些章节/段落需要修改
-2. **精确提取原文**: 从文档中逐字复制需要修改的原文片段（用于定位）
-3. **说明原因**: 解释为什么需要修改这些部分
-4. **分类修改**: 说明修改类型（如术语统一、内容补充、观点调整等）
+   - 对于"术语替换"：不是简单地找包含术语的章节，而是分析替换后对内容的影响
+   - 对于"内容补充"：分析哪些部分内容不足，需要补充什么
+   - 对于"观点调整"：分析哪些观点与要求不符，如何调整
+
+2. **精确提取原文**: 从文档中提取需要修改的原文片段（用于定位）
+   
+3. **深度说明原因**: 不要只说"包含XX术语"，而要说明：
+   - 这部分为什么需要修改？
+   - 修改后会有什么效果？
+   - 这个修改对整体文档的价值是什么？
+   
+4. **分类修改**: 说明修改类型（如术语统一、内容补充、观点调整、逻辑优化等）
 
 **输出格式**: 使用以下JSON格式：
 ```json
@@ -459,50 +475,137 @@ class ConsistencyChecker:
       "location": "清晰的位置描述（如'第1章 Introduction 第一段'）",
       "original_text": "从文档中逐字精确复制的原文片段（完整的段落或句子，用于精确定位）",
       "modification_reason": "为什么需要修改这部分",
-      "modification_type": "修改类型"
+      "modification_type": "修改类型",
+      "is_full_chapter": true/false
     }}
   ],
   "overall_guidance": "整体修改指导说明"
 }}
 ```
 
-**关键要求**:
-- **original_text必须从文档中逐字精确复制**，包括所有标点符号和空格
-- **original_text必须是完整的、连续的内容块**：
-  * 如果是一个章节，提取从标题到该章节结束的完整内容
-  * 如果是一个段落，提取完整的段落（不能只提取开头或结尾）
-  * 如果是多个子章节，提取完整的所有子章节
-- **禁止使用省略号（...或…）**，必须提取完整文本
-- **禁止只提取标题或开头几句**，必须提取需要修改的完整范围
-- 如果某处需要修改的内容太长（超过500行），可以拆分成多个完整的小节
-- 不要生成修改后的内容，只提取需要修改的原文
-- 如果文档无需修改，设置needs_modification为false
+**CRITICAL RULES - 按章节提取，严禁重复**:
 
-**特别注意**：
-- ❌ 错误示例：只提取了标题和开头
-  ```
-  "original_text": "## 3.3. Loss Function\n\n本节详细阐述..."
-  ```
-- ✅ 正确示例：提取了完整的章节（包括所有子章节）
-  ```
-  "original_text": "## 3.3. Loss Function\n\n本节详细阐述...\n\n### 3.3.1. ...\n\n（完整内容）\n\n### 3.3.2. ...\n\n（完整内容）"
-  ```
+**核心策略：只提取Markdown标题，系统会自动扩展到完整章节**
 
-**示例**（正确）:
+1. **original_text提取规则**：
+   - ✅ **只提取Markdown标题行**（如 "# 4 Memory Modeling in MemOS"）
+   - ✅ 系统会自动扩展到该标题对应的完整章节内容
+   - ✅ 支持所有级别的标题：#, ##, ###, ####等
+   - ❌ 不要提取完整内容（太长，容易超token限制）
+   - ❌ 不要使用省略号
+
+2. **层级互斥原则（重要！防止重复）**：
+   - ❌ **禁止同时提取父章节和子章节**
+   - 例如：如果提取了 `# 3 Design Philosophy`（父章节），就**不要**再提取 `## 3.1 Vision`、`## 3.2 From OS`（子章节）
+   - 原因：父章节包含了所有子章节的内容，重复提取会导致内容重复
+   
+3. **优先级选择**：
+   - 优先选择**顶层章节**（#）：如果整章都需要修改，只提取顶层标题
+   - 仅在**部分子章节**需要修改时，才提取子章节（##）
+   - 示例：
+     * 如果第3章的3.1、3.2都需要修改 → 只提取 `# 3 章节名`
+     * 如果只有3.2需要修改，3.1不需要 → 只提取 `## 3.2 小节名`
+
+4. **修改粒度建议**：
+   - 对于"术语统一"等全文修改：按**顶层章节**（#）提取，一章一个修改点
+   - 对于"局部修改"：按需要修改的**最小章节单位**提取
+
+5. **深度分析要求（重要！）**：
+   - ❌ **禁止**简单地说"包含XX术语"、"需要替换XX"这种浅层原因
+   - ✅ **必须**深入分析：
+     * 这个章节的核心内容是什么？
+     * 为什么这部分需要修改？（不是"因为有关键词"，而是"这部分讲了什么，修改后有什么意义"）
+     * 修改后对读者理解有什么帮助？
+     * 这个修改在整个文档中的价值是什么？
+   - ✅ **modification_reason至少要包含**：
+     * 章节的主要内容概述
+     * 修改的具体原因和目的
+     * 修改后的预期效果
+   - 示例对比：
+     * ❌ 差："章节包含'MemOS'术语，需要替换"
+     * ✅ 好："本章介绍了系统架构的三层设计，包括接口层、操作层和基础设施层。标题和正文多处使用'MemOS'术语，需要统一替换为'mem0'以保持品牌一致性。这种替换不仅是文字变更，更体现了系统从概念到产品的演进，ReactAgent需要在保持技术深度的同时，确保新术语自然融入架构说明中。"
+
+**正确示例** ✅（深度分析）:
 ```json
 {{
-  "location": "1. Introduction 第一段",
-  "original_text": "作物产量预测对保障粮食安全、优化农业生产布局以及制定精准农业政策具有显著的现实意义和应用价值。"
+  "modification_points": [
+    {{
+      "location": "第3章 Design Philosophy",
+      "original_text": "# 3 MemOS Design Philosophy",
+      "modification_reason": "本章详细阐述了MemOS的设计理念，包括将记忆视为系统资源、演化作为核心能力等核心思想。章节标题和正文多处使用'MemOS'术语，需要统一替换为'mem0'以保持品牌一致性。同时，这种替换不仅是简单的文字变更，更体现了从'Memory OS'到'mem0'的品牌升级，ReactAgent需要在保持原有技术深度的基础上，确保新术语的自然融入。",
+      "modification_type": "术语统一与品牌升级",
+      "is_full_chapter": true
+    }},
+    {{
+      "location": "第5.2节 Execution Path",
+      "original_text": "## 5.2 Execution Path and Interaction Flow of MemOS",
+      "modification_reason": "本节通过具体的执行流程案例（'查询去年的医疗记录'）展示了MemOS各模块的协同工作机制。这是一个关键的技术说明章节，不仅标题包含术语，正文中的架构描述、模块交互说明也大量使用了'MemOS'。需要ReactAgent在替换术语的同时，确保技术描述的准确性和完整性，特别是要保持示例的连贯性和可理解性。",
+      "modification_type": "术语统一 + 技术描述优化",
+      "is_full_chapter": true
+    }}
+  ]
 }}
 ```
 
-**示例**（错误）:
+**错误示例** ❌（重复提取父子章节）:
 ```json
 {{
-  "location": "1. Introduction 第一段",
-  "original_text": "作物产量预测对保障粮食安全...具有显著意义。"  // ❌ 使用了省略号
+  "modification_points": [
+    {{
+      "original_text": "# 3 MemOS Design Philosophy",  // ❌ 提取了父章节
+      "is_full_chapter": true
+    }},
+    {{
+      "original_text": "## 3.1 Vision of MemOS",  // ❌ 又提取了子章节，会导致重复！
+      "is_full_chapter": true
+    }},
+    {{
+      "original_text": "## 3.2 From Computer OS",  // ❌ 又提取了另一个子章节，会导致重复！
+      "is_full_chapter": true
+    }}
+  ]
 }}
 ```
+
+**正确做法**：上面的情况只需要提取 `# 3 MemOS Design Philosophy` 即可，系统会自动包含3.1、3.2等所有子章节。
+
+**部分修改示例** ✅（只修改某个子章节）:
+```json
+{{
+  "modification_points": [
+    {{
+      "location": "4.2 Memory Cube",
+      "original_text": "## 4.2 Memory Cube as Core Resource",
+      "modification_reason": "只有4.2需要修改，4.1不需要",
+      "modification_type": "内容补充",
+      "is_full_chapter": true
+    }}
+  ]
+}}
+```
+
+**段落级修改** ✅（如果确实只需要改一段）:
+```json
+{{
+  "location": "Introduction 第2段",
+  "original_text": "MemOS is a revolutionary memory management system designed for large language models.",
+  "modification_reason": "该段落包含'MemOS'术语",
+  "modification_type": "术语统一",
+  "is_full_chapter": false
+}}
+```
+
+**工作原理**：
+1. 你只需提取标题：`"# 4 Memory Modeling in MemOS"`
+2. 系统自动检测这是标题（以#开头）
+3. 系统自动扩展到完整章节（从这个标题到下一个同级标题之间的所有内容）
+4. ReactAgent基于完整章节生成修改后的完整章节
+5. 完整替换，不会丢失内容
+
+**建议**：
+- 优先使用标题提取方式（最简单、最可靠）
+- 一个章节一个modification_point
+- 让系统自动处理章节边界
 
 只返回JSON，不要其他说明。如果无法返回JSON，请返回：{{"needs_modification": false, "modification_points": [], "overall_guidance": "无法分析"}}"""
 
@@ -510,10 +613,11 @@ class ConsistencyChecker:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "你是一个专业的文档评估专家，擅长分析文档并识别需要修改的部分。"},
+                    {"role": "system", "content": "你是一个专业的文档评估专家。你需要深入分析文档内容，理解修改的深层目的，而不是简单地搜索关键词。对于章节修改，提取Markdown标题即可（如'# 4 章节名'），但modification_reason必须体现你的深度思考和分析。"},
                     {"role": "user", "content": evaluation_prompt}
                 ],
-                temperature=0.3
+                temperature=0.3,  # 提高温度，让AI更有创造性分析
+                max_tokens=8000
             )
             
             raw_response = response.choices[0].message.content.strip()
@@ -530,8 +634,32 @@ class ConsistencyChecker:
             
             modification_points = evaluation.get("modification_points", [])
             logger.info(f"📋 评估结果: 需要修改 {len(modification_points)} 处")
+            
+            # 🔧 第1步：去除重复的父子章节（防止AI违反规则）
+            modification_points = self._deduplicate_hierarchical_chapters(modification_points, original_content)
+            logger.info(f"🔄 去重后: {len(modification_points)} 处")
+            
+            # 🔧 第2步：立即扩展所有修改点的original_text
             for idx, point in enumerate(modification_points, 1):
-                logger.info(f"  {idx}. [{point.get('location', '未知位置')}] {point.get('modification_type', '未知类型')}")
+                location = point.get('location', '未知位置')
+                mod_type = point.get('modification_type', '未知类型')
+                original_text = point.get('original_text', '')
+                is_full_chapter = point.get('is_full_chapter', False)
+                
+                logger.info(f"  {idx}. [{location}] {mod_type} (原文: {len(original_text)}字符)")
+                
+                # 如果是标题（is_full_chapter=true），自动扩展到完整章节
+                if is_full_chapter and original_text.strip().startswith('#'):
+                    logger.info(f"     🔍 检测到章节标题，扩展到完整章节...")
+                    expanded = self._expand_original_text(original_content, original_text)
+                    if len(expanded) > len(original_text):
+                        point['original_text'] = expanded
+                        logger.info(f"     ✅ 扩展: {len(original_text)} → {len(expanded)} 字符")
+                    else:
+                        logger.warning(f"     ⚠️ 扩展失败，保持原样")
+            
+            # 更新evaluation中的modification_points
+            evaluation['modification_points'] = modification_points
             
             return evaluation
             
@@ -550,18 +678,15 @@ class ConsistencyChecker:
                                         evaluation: Dict,
                                         project_id: str = None) -> Dict:
         """
-        使用ReactAgent为每个修改点搜集资料并生成修改后的片段
-        
-        流程：
-        1. 对每个评估出的修改点
-        2. 让ReactAgent搜集相关资料
-        3. ReactAgent生成修改后的片段内容
-        4. 替换回原文
+        智能选择修改策略：
+        - 简单术语替换 → 直接字符串替换
+        - 复杂修改 → ReactAgent搜索+生成
         
         Args:
             modification_request: 修改要求
             original_content: 原始文档内容
             evaluation: AI评估结果（包含modification_points）
+            project_id: 项目ID
             
         Returns:
             {
@@ -585,8 +710,9 @@ class ConsistencyChecker:
             }
         
         # 创建ReactAgent实例
+        # max_iterations=5: 允许多次search搜集资料，但generate只能1次
         agent = ReactAgent(
-            max_iterations=3,
+            max_iterations=5,  # ✅ 允许多次搜索资料
             project_id=project_id or self.project_id,
             top_k=10,
             use_refine=False
@@ -602,40 +728,92 @@ class ConsistencyChecker:
                 original_text_ref = point.get("original_text", "")  # 评估阶段的参考原文
                 modification_reason = point.get("modification_reason", "")
                 modification_type = point.get("modification_type", "")
+                is_full_chapter = point.get("is_full_chapter", False)
+                
+                # 检查original_text长度
+                original_length = len(original_text_ref)
                 
                 logger.info(f"🔄 修改点 {idx}/{len(modification_points)}: [{location}] - {modification_type}")
+                logger.info(f"   原文长度: {original_length} 字符, 完整章节: {is_full_chapter}")
                 
-                # 构建ReactAgent的搜索和生成任务
-                # 简化策略：让ReactAgent只生成修改后的内容，不提取原文
-                react_task = f"""根据以下要求，生成修改后的内容片段。
+                # 根据is_full_chapter和original_length决定生成策略
+                if is_full_chapter or original_length > 1000:
+                    task_type = "章节重写"
+                    length_requirement = f"必须生成与原文等长的完整章节（{original_length}字符左右，允许±10%）"
+                    structure_requirement = "保持原章节的所有子章节结构（##、###等）"
+                else:
+                    task_type = "段落修改"
+                    length_requirement = f"保持段落长度（约{original_length}字符）"
+                    structure_requirement = "保持段落格式"
+                
+                # 构建ReactAgent的任务
+                react_task = f"""你是一个专业的文档修改助手。请按以下步骤完成任务：
 
 【修改要求】
 {modification_request}
 
-【修改位置】
-{location}
+【修改位置】{location}
 
-【修改类型】
-{modification_type}
-
-【修改原因】
+【修改原因与深度分析】
 {modification_reason}
 
-【原文参考】
+【修改类型】{modification_type}
+
+【原文内容】（{original_length}字符）
+```
 {original_text_ref}
+```
 
-**任务**：
-1. 搜集相关资料来完善修改内容
-2. 基于原文和RAG资料，生成修改后的内容
+【工作流程】
 
-**输出要求**：
-- 直接输出修改后的完整内容片段
-- 保持原文的格式和结构（如Markdown格式）
-- 基于RAG搜索的资料完善修改内容
-- 只修改必要的部分，不要大幅改写
-- 不要重复输出原文
+**阶段1：理解修改的深层目的**
+- 仔细阅读【修改原因与深度分析】，理解为什么要修改这部分内容
+- 这不是简单的文字替换，而是要根据分析中提到的目的和意义进行修改
+- 思考：修改后应该达到什么效果？对读者有什么帮助？
 
-直接输出修改后的内容片段，不要JSON格式，不要其他说明。"""
+**阶段2：搜索资料（如果需要）**
+- 如果修改要求是简单的术语替换（如"将MemOS改为mem0"），**不需要搜索**，直接进入阶段3
+- 如果修改要求涉及内容补充、扩展、优化，**可以多次搜索**相关资料
+- 根据【修改原因与深度分析】中提到的需求，有针对性地搜索
+- 搜索策略：
+  * 第1次搜索：核心概念和定义
+  * 第2次搜索（如需要）：相关技术细节
+  * 第3次搜索（如需要）：应用案例或最新研究
+- 搜索够了就停止，不要过度搜索
+
+**阶段3：生成修改后的内容（只能1次）**
+- 基于原文、【修改原因与深度分析】和搜索到的资料，**一次性**生成完整的修改后内容
+- **禁止**生成后再继续迭代或继续生成
+- 生成完立即finish
+
+【生成要求】
+
+1. **完整性**：
+   - 必须覆盖原文的所有内容（{original_length}字符）
+   - {structure_requirement}
+   - 不要截断，不要只生成开头部分
+   - 一次性生成完整内容
+
+2. **修改准确性**：
+   - 根据【修改原因与深度分析】中的深层目的进行修改，而不是简单的文字替换
+   - 严格按照修改要求执行（如"MemOS"→"mem0"）
+   - 保持原文的结构、逻辑、学术风格
+   - 如果【修改原因与深度分析】中提到了特定的修改意义或预期效果，要在生成内容中体现出来
+   - 只修改需要改的部分，不要大幅改写
+
+3. **格式规范**：
+   - 保留所有Markdown格式
+   - 不要添加```代码块标记
+   - 直接输出纯文本
+
+4. **长度控制**：
+   - 目标长度：{length_requirement}
+   - 如果明显偏短，说明内容不完整
+
+【重要】
+- 生成时一次性输出完整内容，不要分段生成
+- 生成后立即返回finish，不要继续迭代
+"""
                 
                 # 使用ReactAgent生成内容
                 result = await agent.run(react_task)
@@ -936,18 +1114,8 @@ class ConsistencyChecker:
             modified_text = mod.get("modified_text", "").strip()
             location = mod.get("location", "未知")
             
-            # 🔧 智能检测：如果modified_text比original_text长很多，说明提取不完整
-            if len(modified_text) > len(original_text) * 2 and len(modified_text) > 500:
-                logger.warning(f"⚠️ 检测到修改点 [{location}] 的original_text可能不完整")
-                logger.warning(f"   原文长度: {len(original_text)}, 修改后长度: {len(modified_text)}")
-                logger.warning(f"   尝试从文档中扩展提取范围...")
-                
-                # 尝试智能扩展：找到包含original_text的更大段落
-                expanded_text = self._expand_original_text(original_content, original_text)
-                if expanded_text and len(expanded_text) > len(original_text):
-                    logger.info(f"   ✅ 扩展成功: {len(original_text)} → {len(expanded_text)} 字符")
-                    original_text = expanded_text
-                    mod["original_text"] = original_text
+            # 注意：original_text的扩展已经在评估阶段完成
+            # 这里不再需要二次扩展
             
             original_normalized = normalize_text(original_text)
             
@@ -984,43 +1152,11 @@ class ConsistencyChecker:
                 logger.info(f"   原文: {original_text[:60]}...")
                 continue
             
-            # 🚨 防止重复：智能检测重复模式
-            
-            # 检测1：modified_text 包含 original_text
-            if original_text in modified_text and modified_text != original_text:
-                if modified_text.startswith(original_text):
-                    logger.warning(f"⚠️ 修改 #{idx} [{location}]: 检测到修改内容包含原文（前置）")
-                    logger.warning(f"   跳过以防止重复")
-                    continue
-                elif modified_text.endswith(original_text):
-                    logger.warning(f"⚠️ 修改 #{idx} [{location}]: 检测到修改内容包含原文（后置）")
-                    logger.warning(f"   跳过以防止重复")
-                    continue
-            
-            # 检测2：检查替换后是否会导致段落重复
-            # 提取 modified_text 的前100字符作为特征
-            modified_signature = modified_text[:100].strip()
-            if modified_signature and modified_signature in result:
-                # 检查这个签名是否已经在文档中（不是来自original_text）
-                if modified_signature not in original_text:
-                    logger.warning(f"⚠️ 修改 #{idx} [{location}]: 修改内容的开头已存在于文档中")
-                    logger.warning(f"   特征: {modified_signature[:50]}...")
-                    logger.warning(f"   可能导致重复，跳过")
-                    continue
-            
             # 方法1: 精确匹配
             if original_text in result:
-                # 检查替换后是否会导致重复
-                temp_result = result.replace(original_text, modified_text, 1)
-                
-                # 检测是否会产生连续重复的内容
-                if modified_text in result and modified_text != original_text:
-                    logger.warning(f"⚠️ 修改 #{idx} [{location}]: 修改后的内容已存在于文档中")
-                    logger.warning(f"   跳过以防止重复")
-                    logger.warning(f"   修改内容: {modified_text[:60]}...")
-                    continue
-                
-                result = temp_result
+                # 直接替换，不需要额外的重复检查
+                # 因为我们找到了原文，就应该替换它，不管替换后的内容是什么
+                result = result.replace(original_text, modified_text, 1)
                 applied_count += 1
                 logger.info(f"✅ 修改 #{idx} [{location}] (精确匹配)")
                 logger.info(f"   {len(original_text)} 字符 → {len(modified_text)} 字符")
@@ -1069,103 +1205,183 @@ class ConsistencyChecker:
         if failed_mods:
             logger.warning(f"⚠️ 未应用的修改: {', '.join(failed_mods)}")
         
-        # 🔧 后处理：检测并移除重复的段落
-        result = self._remove_duplicate_paragraphs(result)
-        
         return result
     
-    def _remove_duplicate_paragraphs(self, content: str) -> str:
+    def _deduplicate_hierarchical_chapters(self, modification_points: List[Dict], document: str) -> List[Dict]:
         """
-        检测并移除文档中重复的段落
+        去除重复的父子章节
+        
+        例如：如果同时有 "# 3 章节" 和 "## 3.1 小节"，只保留父章节
         
         Args:
-            content: 文档内容
+            modification_points: 修改点列表
+            document: 完整文档
             
         Returns:
-            去重后的文档内容
+            去重后的修改点列表
         """
-        paragraphs = content.split('\n\n')
-        seen_paragraphs = {}
-        unique_paragraphs = []
-        removed_count = 0
+        if not modification_points:
+            return modification_points
         
-        for idx, para in enumerate(paragraphs):
-            para_normalized = para.strip()
-            if not para_normalized:
-                unique_paragraphs.append(para)
+        # 提取每个修改点的标题级别和章节编号
+        points_with_meta = []
+        for point in modification_points:
+            original_text = point.get('original_text', '').strip()
+            if not original_text.startswith('#'):
+                # 不是标题，保留
+                points_with_meta.append({
+                    'point': point,
+                    'is_title': False,
+                    'level': 999,  # 非标题，级别最低
+                    'chapter_num': None
+                })
                 continue
             
-            # 使用段落的前100字符作为签名
-            signature = para_normalized[:100]
+            # 提取标题级别（#的数量）
+            title_line = original_text.split('\n')[0]
+            level = 0
+            for char in title_line:
+                if char == '#':
+                    level += 1
+                else:
+                    break
             
-            if signature in seen_paragraphs:
-                # 发现重复段落
-                prev_idx = seen_paragraphs[signature]
-                logger.warning(f"🔄 检测到重复段落 (位置 {idx} 与 {prev_idx})")
-                logger.warning(f"   内容: {signature[:60]}...")
-                removed_count += 1
-                # 跳过这个重复段落
+            # 提取章节编号（如 "3", "3.1", "4.2"）
+            # 假设格式为 "# 3 章节名" 或 "## 3.1 小节名"
+            import re
+            chapter_match = re.search(r'#\s+(\d+(?:\.\d+)*)', title_line)
+            chapter_num = chapter_match.group(1) if chapter_match else None
+            
+            points_with_meta.append({
+                'point': point,
+                'is_title': True,
+                'level': level,
+                'chapter_num': chapter_num,
+                'title': title_line
+            })
+        
+        # 检测并移除子章节（如果父章节存在）
+        to_remove = set()
+        for i, meta_i in enumerate(points_with_meta):
+            if not meta_i['is_title'] or meta_i['chapter_num'] is None:
                 continue
-            else:
-                seen_paragraphs[signature] = idx
-                unique_paragraphs.append(para)
+            
+            for j, meta_j in enumerate(points_with_meta):
+                if i == j or not meta_j['is_title'] or meta_j['chapter_num'] is None:
+                    continue
+                
+                # 检查是否为父子关系
+                # 例如：chapter_i="3", chapter_j="3.1" → j是i的子章节
+                if (meta_j['level'] > meta_i['level'] and 
+                    meta_j['chapter_num'].startswith(meta_i['chapter_num'] + '.')):
+                    # meta_j是meta_i的子章节，标记删除
+                    to_remove.add(j)
+                    logger.warning(f"🔄 检测到父子章节重复:")
+                    logger.warning(f"   父章节: {meta_i['title']}")
+                    logger.warning(f"   子章节: {meta_j['title']} ← 将被移除（已包含在父章节中）")
         
-        if removed_count > 0:
-            logger.info(f"✅ 移除了 {removed_count} 个重复段落")
+        # 移除重复的子章节
+        deduplicated = [meta['point'] for i, meta in enumerate(points_with_meta) if i not in to_remove]
         
-        return '\n\n'.join(unique_paragraphs)
+        if to_remove:
+            logger.info(f"✅ 移除了 {len(to_remove)} 个重复的子章节")
+        
+        return deduplicated
     
     def _expand_original_text(self, document: str, partial_text: str) -> str:
         """
         智能扩展原文提取范围
         
-        如果AI只提取了章节的开头，尝试提取完整的章节
+        核心功能：将Markdown标题扩展为完整章节内容
         
         Args:
             document: 完整文档
-            partial_text: 部分提取的原文
+            partial_text: 部分提取的原文（通常是标题）
             
         Returns:
-            扩展后的完整原文
+            扩展后的完整章节内容
         """
-        if not partial_text or partial_text not in document:
+        if not partial_text:
             return partial_text
         
-        # 找到partial_text在文档中的位置
-        start_pos = document.find(partial_text)
+        partial_text_stripped = partial_text.strip()
+        
+        # 找到partial_text在文档中的位置（忽略前后空白）
+        start_pos = document.find(partial_text_stripped)
         if start_pos == -1:
-            return partial_text
+            # 尝试模糊匹配（去除多余空格）
+            import re
+            normalized_partial = re.sub(r'\s+', ' ', partial_text_stripped)
+            normalized_doc = re.sub(r'\s+', ' ', document)
+            start_pos_normalized = normalized_doc.find(normalized_partial)
+            if start_pos_normalized != -1:
+                # 在原文档中找到对应位置
+                # 简化处理：直接使用原始查找
+                pass
+            else:
+                logger.warning(f"⚠️ 无法在文档中找到原文: {partial_text_stripped[:100]}")
+                return partial_text
         
-        # 检测partial_text是否以标题开头（##, ###等）
-        if partial_text.startswith('#'):
-            # 提取标题级别
-            title_level = len(partial_text.split()[0])  # 计算#的数量
+        # 检测是否为Markdown标题（以#开头）
+        if partial_text_stripped.startswith('#'):
+            logger.info(f"🔍 检测到标题，开始扩展到完整章节...")
             
-            # 从start_pos开始，找到下一个同级或更高级的标题
-            end_pos = start_pos + len(partial_text)
-            remaining_doc = document[end_pos:]
+            # 提取标题级别（#的数量）
+            title_match = partial_text_stripped.split('\n')[0]  # 只看第一行
+            title_level = 0
+            for char in title_match:
+                if char == '#':
+                    title_level += 1
+                else:
+                    break
             
-            # 查找下一个同级或更高级标题
-            lines = remaining_doc.split('\n')
-            for i, line in enumerate(lines):
-                if line.strip().startswith('#'):
-                    # 计算这个标题的级别
-                    current_level = len(line.strip().split()[0]) if line.strip().split() else 0
+            logger.info(f"   标题级别: {'#' * title_level} (level {title_level})")
+            
+            # 从start_pos开始查找这个章节的结束位置
+            # 结束位置 = 下一个同级或更高级的标题
+            chapter_start = start_pos
+            chapter_end = len(document)  # 默认到文档末尾
+            
+            # 在start_pos之后查找下一个标题
+            lines_after = document[start_pos + len(partial_text_stripped):].split('\n')
+            chars_accumulated = start_pos + len(partial_text_stripped)
+            
+            for line in lines_after:
+                chars_accumulated += len(line) + 1  # +1 for \n
+                
+                line_stripped = line.strip()
+                if line_stripped.startswith('#'):
+                    # 找到一个标题，检查级别
+                    current_level = 0
+                    for char in line_stripped:
+                        if char == '#':
+                            current_level += 1
+                        else:
+                            break
+                    
+                    # 如果是同级或更高级的标题，这里就是章节结束
                     if current_level <= title_level:
-                        # 找到了同级或更高级标题，在这里截断
-                        expanded_text = document[start_pos:end_pos + sum(len(l) + 1 for l in lines[:i])]
-                        return expanded_text.strip()
+                        chapter_end = chars_accumulated - len(line) - 1  # 回退到这一行之前
+                        logger.info(f"   找到下一个同级标题: {'#' * current_level} {line_stripped[:50]}")
+                        break
             
-            # 如果没找到下一个标题，提取到文档末尾（但限制在5000字符内）
-            expanded_text = document[start_pos:start_pos + len(partial_text) + 5000]
-            return expanded_text.strip()
+            # 提取完整章节
+            full_chapter = document[chapter_start:chapter_end].strip()
+            
+            logger.info(f"   ✅ 扩展成功: {len(partial_text_stripped)} → {len(full_chapter)} 字符")
+            logger.info(f"   章节预览: {full_chapter[:100]}...")
+            
+            return full_chapter
         
-        # 如果不是标题开头，尝试扩展到段落结束
-        end_pos = start_pos + len(partial_text)
-        # 找到下一个空行（段落结束）
-        next_double_newline = document.find('\n\n', end_pos)
-        if next_double_newline != -1 and next_double_newline - start_pos < 3000:
-            return document[start_pos:next_double_newline].strip()
+        # 如果不是标题，尝试扩展到段落结束
+        else:
+            end_pos = start_pos + len(partial_text_stripped)
+            # 找到下一个双换行（段落结束）
+            next_para = document.find('\n\n', end_pos)
+            if next_para != -1 and next_para - start_pos < 2000:
+                paragraph = document[start_pos:next_para].strip()
+                logger.info(f"   扩展段落: {len(partial_text_stripped)} → {len(paragraph)} 字符")
+                return paragraph
         
         return partial_text
     

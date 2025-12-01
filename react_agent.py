@@ -111,6 +111,10 @@ class ReactAgent:
                 article_part = await self._generate_content(user_request, context, action.get("instruction", ""))
                 article_parts.append(article_part)
                 logger.info(f"文章片段已生成，长度: {len(article_part)} 字符")
+                
+                # ✅ 生成后立即结束，不再继续迭代
+                logger.info("✅ 生成完成，立即结束（不继续迭代）")
+                break
             
             elif action_type == "finish":
                 # 完成生成
@@ -295,6 +299,8 @@ class ReactAgent:
     async def _generate_content(self, user_request: str, context: str, instruction: str) -> str:
         """
         根据上下文生成文章内容
+        
+        NOTE: 不设置max_tokens，让模型根据任务需求自行决定生成长度
         """
         prompt = f"""基于以下资料，生成关于"{user_request}"的文章内容。
 
@@ -308,6 +314,7 @@ class ReactAgent:
 2. 逻辑清晰、结构合理
 3. 引用资料中的关键信息
 4. 使用中文撰写
+5. **必须生成完整的内容，不要截断**
 
 直接返回文章内容，不要其他说明。"""
 
@@ -318,8 +325,8 @@ class ReactAgent:
                     {"role": "system", "content": "你是一个专业的内容创作者，擅长撰写高质量文章。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.8,
-                max_tokens=2000
+                temperature=0.8
+                # ✅ 移除max_tokens限制，让模型自己决定
             )
             
             return response.choices[0].message.content.strip()
@@ -442,6 +449,8 @@ class ReactAgent:
     async def _generate_content_without_rag(self, user_request: str) -> str:
         """
         不使用 RAG 资料，直接用大模型知识生成文章
+        
+        NOTE: 不设置max_tokens，让模型根据任务需求自行决定生成长度
         """
         prompt = f"""请根据以下主题，使用你自身的知识撰写一篇高质量的文章。
 
@@ -452,6 +461,7 @@ class ReactAgent:
 2. 逻辑清晰、结构合理
 3. 使用中文撰写
 4. 包含引言、主体和结论
+5. **必须生成完整的内容，不要截断**
 
 直接返回文章内容，不要其他说明。"""
 
@@ -463,8 +473,8 @@ class ReactAgent:
                     {"role": "system", "content": "你是一个专业的内容创作者，擅长撰写高质量文章。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.8,
-                max_tokens=3000
+                temperature=0.8
+                # ✅ 移除max_tokens限制，让模型自己决定
             )
             
             return response.choices[0].message.content.strip()

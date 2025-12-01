@@ -1,56 +1,55 @@
 .consistency-mode {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 40px 30px;
-  background: linear-gradient(135deg, #1e1e1e 0%, #2d2d30 100%);
-  color: #e0e0e0;
-  min-height: 100vh;
+  padding: 20px;
+  background: #1e1e1e;
+  color: #cccccc;
+  height: 100%;
+  overflow-y: auto;
 }
 
 .consistency-mode h1 {
-  font-size: 32px;
-  margin-bottom: 10px;
-  color: #fff;
-  text-align: center;
+  font-size: 20px;
+  margin-bottom: 8px;
+  color: #cccccc;
+  font-weight: 600;
 }
 
 .subtitle {
-  text-align: center;
-  color: #888;
-  margin-bottom: 40px;
-  font-size: 16px;
+  color: #858585;
+  margin-bottom: 24px;
+  font-size: 13px;
 }
 
 /* 分区 */
 .section {
   background: #252526;
-  border-radius: 12px;
-  padding: 30px;
-  margin-bottom: 30px;
-  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 20px;
+  margin-bottom: 20px;
+  border: 1px solid #3e3e42;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
 .section h2 {
-  color: #fff;
-  font-size: 24px;
-  margin-bottom: 10px;
+  color: #cccccc;
+  font-size: 16px;
+  margin-bottom: 12px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  font-weight: 600;
 }
 
 .description {
-  color: #999;
-  margin-bottom: 25px;
-  font-size: 14px;
-  line-height: 1.6;
+  color: #858585;
+  margin-bottom: 16px;
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .divider {
   border: none;
-  border-top: 2px solid #333;
-  margin: 40px 0;
+  border-top: 1px solid #3e3e42;
+  margin: 24px 0;
 }
 
 /* 输入字段 */
@@ -61,16 +60,16 @@
 
 .form-label {
   display: block;
-  color: #ccc;
-  margin-bottom: 8px;
+  color: #858585;
+  margin-bottom: 6px;
   font-weight: 500;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .hint {
   display: block;
-  color: #666;
-  font-size: 12px;
+  color: #6a6a6a;
+  font-size: 11px;
   font-weight: 400;
   margin-top: 4px;
 }
@@ -79,13 +78,12 @@
 .textarea-field,
 .url-input {
   width: 100%;
-  padding: 12px 16px;
-  background: #1e1e1e;
-  border: 1px solid #444;
-  border-radius: 6px;
-  color: #e0e0e0;
-  font-size: 14px;
-  transition: all 0.3s;
+  padding: 10px 12px;
+  background: #3c3c3c;
+  border: 1px solid #3e3e42;
+  border-radius: 4px;
+  color: #cccccc;
+  font-size: 13px;
 }
 
 .input-field:focus,
@@ -93,7 +91,7 @@
 .url-input:focus {
   outline: none;
   border-color: #007acc;
-  box-shadow: 0 0 0 3px rgba(0, 122, 204, 0.1);
+  background: #2d2d30;
 }
 
 .input-field-small {
@@ -174,23 +172,23 @@
 .btn-primary,
 .btn-view-diff,
 .btn-close {
-  padding: 10px 20px;
+  padding: 8px 16px;
   border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
-  transition: all 0.3s;
+  transition: background 0.2s;
 }
 
 .btn-add {
-  background: #007acc;
+  background: #0e639c;
   color: white;
   white-space: nowrap;
 }
 
 .btn-add:hover {
-  background: #005a9e;
+  background: #1177bb;
 }
 
 .btn-remove {
@@ -205,40 +203,36 @@
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #007acc 0%, #005a9e 100%);
+  background: #0e639c;
   color: white;
-  padding: 14px 28px;
-  font-size: 15px;
+  padding: 10px 20px;
+  font-size: 13px;
   width: 100%;
-  margin-top: 10px;
-  box-shadow: 0 4px 12px rgba(0, 122, 204, 0.3);
+  margin-top: 8px;
 }
 
 .btn-primary:hover {
-  background: linear-gradient(135deg, #005a9e 0%, #004578 100%);
-  box-shadow: 0 6px 16px rgba(0, 122, 204, 0.4);
-  transform: translateY(-2px);
+  background: #1177bb;
 }
 
 .btn-primary:disabled {
-  background: #444;
+  background: #3e3e42;
   cursor: not-allowed;
   opacity: 0.6;
-  transform: none;
 }
 
 .btn-large {
-  padding: 16px 32px;
-  font-size: 16px;
+  padding: 12px 24px;
+  font-size: 14px;
 }
 
 .btn-view-diff {
-  background: #28a745;
+  background: #6a9955;
   color: white;
 }
 
 .btn-view-diff:hover {
-  background: #218838;
+  background: #588a45;
 }
 
 /* 状态框 */

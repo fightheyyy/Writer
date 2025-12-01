@@ -209,6 +209,10 @@ class ConsistencyCheckRequest(BaseModel):
     modification_request: str
     project_id: str
     top_k: int = 15
+    # 🆕 可选：直接指定要修改的文档（如刚生成的文档）
+    target_file: Optional[str] = None  # MinIO URL
+    # 🆕 可选：是否同时检索并修改相关文档
+    include_related: bool = True
 
 
 class FileModification(BaseModel):
@@ -241,64 +245,77 @@ async def check_consistency(request: ConsistencyCheckRequest):
     RAG模式一致性检查
     
     工作流程：
-    1. 通过RAG检索与修改点相关的所有文档
-    2. 从MinIO读取这些文档的完整内容
-    3. AI分析一致性并生成修改建议
-    4. 返回Diff结果
+    1. （可选）如果指定了target_file，优先加载该文档
+    2. （可选）如果include_related=True，通过RAG检索相关文档
+    3. AI分析一致性
+    4. 为所有加载的文档生成修改建议并返回Diff结果
+    
+    参数：
+    - target_file: 指定要修改的文档（优先级最高）
+    - include_related: 是否同时检索相关文档（默认True）
+    - modification_point: 修改点关键词，用于RAG检索
+    - modification_request: 具体修改要求
     """
     logger.info(f"\n{'='*80}")
     logger.info(f"RAG模式一致性检查")
     logger.info(f"修改点: {request.modification_point}")
     logger.info(f"Project ID: {request.project_id}")
     logger.info(f"Top K: {request.top_k}")
+    logger.info(f"🎯 指定文件: {request.target_file or '无'}")
+    logger.info(f"🔍 检索相关文档: {'是' if request.include_related else '否'}")
     logger.info(f"{'='*80}\n")
     
     try:
-        # 步骤1: 通过RAG检索相关文档
-        logger.info("步骤1/4: RAG检索相关文档...")
-        related_docs_result = await consistency_checker.find_related_documents(
-            modification_point=request.modification_point,
-            project_id=request.project_id,
-            top_k=request.top_k
-        )
-        
-        if related_docs_result["total_files"] == 0:
-            return ConsistencyCheckResponse(
-                success=True,
-                modification_point=request.modification_point,
-                consistency_analysis={},
-                related_files={},
-                total_files=0,
-                total_chunks=0,
-                modifications=[],
-                message="未找到相关文档"
-            )
-        
-        logger.info(f"找到 {related_docs_result['total_files']} 个相关文档")
-        
-        # 步骤2: 从MinIO读取完整文档内容
-        logger.info("步骤2/4: 从MinIO读取文档内容...")
         files_content = {}
-        for minio_url in related_docs_result["related_files"].keys():
-            content = await consistency_checker.read_file_content(minio_url)
-            if content:
-                files_content[minio_url] = content
-                logger.info(f"读取成功: {minio_url.split('/')[-1]} ({len(content)} 字符)")
+        related_docs_result = {"related_files": {}, "total_files": 0, "total_chunks": 0}
         
+        # 🆕 步骤1: 如果指定了target_file，优先加载
+        if request.target_file:
+            logger.info(f"步骤1: 加载指定文档: {request.target_file}")
+            content = await consistency_checker.read_file_content(request.target_file)
+            if content:
+                files_content[request.target_file] = content
+                logger.info(f"✅ 加载成功: {len(content)} 字符")
+            else:
+                logger.warning(f"⚠️ 无法读取指定文档: {request.target_file}")
+        
+        # 🆕 步骤2: 如果需要相关文档，通过RAG检索
+        if request.include_related:
+            logger.info("步骤2: RAG检索相关文档...")
+            related_docs_result = await consistency_checker.find_related_documents(
+                modification_point=request.modification_point,
+                project_id=request.project_id,
+                top_k=request.top_k,
+                current_file=request.target_file  # 排除已加载的target_file
+            )
+            
+            logger.info(f"找到 {related_docs_result['total_files']} 个相关文档")
+            
+            # 读取RAG检索到的文档
+            for minio_url in related_docs_result["related_files"].keys():
+                if minio_url not in files_content:  # 避免重复加载
+                    content = await consistency_checker.read_file_content(minio_url)
+                    if content:
+                        files_content[minio_url] = content
+                        logger.info(f"读取成功: {minio_url.split('/')[-1]} ({len(content)} 字符)")
+        
+        # 检查是否有文档需要处理
         if not files_content:
             return ConsistencyCheckResponse(
-                success=False,
+                success=True,
                 modification_point=request.modification_point,
                 consistency_analysis={},
                 related_files=related_docs_result["related_files"],
                 total_files=related_docs_result["total_files"],
                 total_chunks=related_docs_result["total_chunks"],
                 modifications=[],
-                message="无法读取文档内容"
+                message="未找到需要修改的文档"
             )
         
+        logger.info(f"📊 总共加载 {len(files_content)} 个文档")
+        
         # 步骤3: AI分析一致性
-        logger.info("步骤3/4: AI分析一致性...")
+        logger.info("步骤3: AI分析一致性...")
         
         analysis = await consistency_checker.analyze_consistency(
             modification_request=request.modification_request,
@@ -307,7 +324,7 @@ async def check_consistency(request: ConsistencyCheckRequest):
         )
         
         # 步骤4: 为所有找到的文档生成修改建议
-        logger.info("步骤4/4: 生成修改建议...")
+        logger.info("步骤4: 生成修改建议...")
         modifications = []
         
         if files_content:

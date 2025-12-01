@@ -4,18 +4,16 @@ import GenerateMode from './components/GenerateMode'
 import EditMode from './components/EditMode'
 import ConsistencyMode from './components/ConsistencyMode'
 import ChatConsistencyMode from './components/ChatConsistencyMode'
-import StarBackground from './components/StarBackground'
+import StarfieldBackground from './components/StarfieldBackground'
+import FloatingPlanets from './components/FloatingPlanets'
 
 function App() {
   const [mode, setMode] = useState('chat-consistency')
 
   return (
     <div className="app">
-      <StarBackground />
-      <header className="app-header">
-        <h1>AI Writer</h1>
-        <p>智能文章生成与编辑助手</p>
-      </header>
+      <StarfieldBackground />
+      <FloatingPlanets />
 
       <div className="mode-selector">
         <button
@@ -40,7 +38,7 @@ function App() {
           className={mode === 'chat-consistency' ? 'active' : ''}
           onClick={() => setMode('chat-consistency')}
         >
-          💬 AI对话助手
+          AI对话助手
         </button>
       </div>
 

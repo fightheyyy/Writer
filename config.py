@@ -19,7 +19,7 @@ print(f"[CONFIG DEBUG] OPENROUTER_API_KEY: {OPENROUTER_API_KEY[:20] if OPENROUTE
 print(f"[CONFIG DEBUG] MODEL_NAME: {os.getenv('MODEL_NAME', 'NOT SET')}")
 
 # 模型配置
-MODEL_NAME = os.getenv("MODEL_NAME", "anthropic/claude-3.5-sonnet")
+MODEL_NAME = os.getenv("MODEL_NAME", "x-ai/grok-4.1-fast")
 
 # RAG 搜索接口
 RAG_SEARCH_URL = "http://43.139.19.144:1234/search"
@@ -35,5 +35,5 @@ MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "5"))
 KB_CACHE_DIR = os.getenv("KB_CACHE_DIR", "/data/knowledge_base/documents")
 
 # 知识库处理接口
-KB_PROCESS_URL = os.getenv("KB_PROCESS_URL", "http://localhost:8001/api/v1/process_and_extract")
+KB_PROCESS_URL = os.getenv("KB_PROCESS_URL", "http://43.139.19.144:8001/api/v1/process_and_extract")
 
